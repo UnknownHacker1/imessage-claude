@@ -28,3 +28,11 @@ Helper: `D="bash ~/.claude/skills/imessage-composio/scripts/doctor.sh"`. `$D sta
 - Not in `claude mcp list`: add it at https://claude.ai/customize/connectors: + > Add custom connector, URL `https://connect.composio.dev/mcp`, then Connect. On Team or Enterprise plans only an Owner can add custom connectors; if so, say that to the owner.
 - Shows "Needs authentication": `claude mcp login "<name from claude mcp list>"`.
 - Fallback when claude.ai connectors don't load into Claude Code: `claude mcp add --scope user --transport http composio https://connect.composio.dev/mcp` then `claude mcp login composio`. The allow rule `mcp__composio` is already in the Part B settings.
+
+## Part C (iMessage inside Composio)
+- `$D wait bridge` fails: look at `~/imessage-claude/.state/bridge.log`. `unable to open database` means Terminal lacks Full Disk Access, and Terminal must be restarted after the switch is turned on. Restart the window with `$D bridge-on`.
+- `$D wait tunnel` fails: look at `~/imessage-claude/.state/ngrok.log`. `authentication failed` means the token is wrong: copy it again at https://dashboard.ngrok.com/get-started/your-authtoken and run `$D ngrok-token`. `ERR_NGROK_108` means another ngrok is already running on this account. Free accounts get one at a time, so `pkill ngrok` and run `$D bridge-on`.
+- The URL changed (Composio stopped reaching it): `~/imessage-claude/.state/ngrok.url` pins the free dev domain. Delete that file, run `$D bridge-on`, then `$D open-composio-app`, and have them update the URL in Composio (or delete the iMessage app and add it again).
+- Composio says it can't connect: it needs the full URL including the secret path ending in `/mcp`. Run `$D open-composio-app` again (it re-copies the URL) and paste it fresh.
+- Sends fail with `-1743`: Terminal isn't allowed to control Messages. Use the Automation fix in Part B.
+- To shut it off: `$D bridge-off` (kills the old URL), and delete the iMessage app in Composio.

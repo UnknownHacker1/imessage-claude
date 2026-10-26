@@ -10,6 +10,13 @@
 #   partb                  write and start the "text Claude from your iPhone" session
 #   test-start             mark the time before the phone test (then: wait reply)
 #   node-path              real path of node, for the Full Disk Access fallback
+# iMessage as an app inside Composio (Part C):
+#   bridge-install         download ngrok (the tunnel that lets Composio reach this Mac)
+#   ngrok-token            save the ngrok authtoken the owner just copied (read from the clipboard, never printed)
+#   bridge-on              turn it on (runs in the "Claude iMessage" window)
+#   bridge-copy            copy the private Composio URL to the clipboard (never printed)
+#   open-composio-app      copy that URL and open Composio's "add custom app" page
+#   bridge-off             turn it off and kill the old URL
 
 SKILL="$(cd "$(dirname "$0")/.." && pwd)"
 RUN="$HOME/imessage-claude"
@@ -23,6 +30,9 @@ AGENT_LABEL="com.imessage-claude.launcher"
 AGENT_PLIST="$HOME/Library/LaunchAgents/$AGENT_LABEL.plist"
 LAUNCHER="$RUN/Claude iMessage.command"
 CHANNEL="plugin:imessage@claude-plugins-official"
+NGROK="$RUN/bin/ngrok"
+NGROK_CFG="$HOME/Library/Application Support/ngrok/ngrok.yml"
+COMPOSIO_CUSTOM_APP="https://dashboard.composio.dev/~/org/connect/apps?add-custom-mcp=true"
 export PATH="$HOME/.local/bin:$HOME/.bun/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 mkdir -p "$STATE"
 
@@ -40,6 +50,36 @@ engine_status() { cat "$STATE/engine.status" 2>/dev/null; }
 job_alive() { local p; p=$(cat "$STATE/$1.pid" 2>/dev/null); [ -n "$p" ] && kill -0 "$p" 2>/dev/null; }
 start_job() { job_alive "$1" && return; echo running > "$STATE/$1.status"; nohup bash "$SKILL/scripts/$1.sh" > "$STATE/$1.log" 2>&1 & }
 composio_line() { claude mcp list 2>/dev/null | grep -i composio | head -1; }
+public_url() { curl -fsS -m 3 http://127.0.0.1:4040/api/tunnels 2>/dev/null | grep -o '"public_url":"https://[^"]*"' | head -1 | sed 's/^"public_url":"//; s/"$//'; }
+bridge_url() { local u; u=$(public_url); [ -n "$u" ] && [ -s "$STATE/bridge.secret" ] && echo "$u/$(cat "$STATE/bridge.secret")/mcp"; }
+
+# Write the login item and (re)start the "Claude iMessage" window with whatever parts are set up.
+restart_window() {
+  cp "$SKILL/files/launcher.command" "$LAUNCHER"; chmod +x "$LAUNCHER"
+  mkdir -p "$HOME/Library/LaunchAgents"
+  cat > "$AGENT_PLIST" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>$AGENT_LABEL</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/open</string><string>-a</string><string>Terminal</string><string>$LAUNCHER</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+</dict>
+</plist>
+EOF
+  # Loading the login item opens the window right away.
+  launchctl bootout "gui/$(id -u)/$AGENT_LABEL" >/dev/null 2>&1
+  pkill -f "Claude iMessage.command" >/dev/null 2>&1
+  pkill -f "channels $CHANNEL" >/dev/null 2>&1
+  pkill -f "$SKILL/scripts/bridge.ts" >/dev/null 2>&1
+  pkill -f "$NGROK" >/dev/null 2>&1
+  sleep 1
+  launchctl bootstrap "gui/$(id -u)" "$AGENT_PLIST" >/dev/null 2>&1 || open -a Terminal "$LAUNCHER"
+}
 
 # --- checks: each returns 0 when done -------------------------------------
 c_mac()          { [ "$(uname)" = "Darwin" ]; }
@@ -60,6 +100,16 @@ c_reply() {
   local since; since=$(cat "$STATE/since" 2>/dev/null); [ -n "$since" ] || return 1
   [ "$(sqlite3 "$DB" "SELECT COUNT(*) FROM message WHERE is_from_me=1 AND date>$since AND (instr(text,'Sent by Claude')>0 OR instr(attributedBody,CAST('Sent by Claude' AS BLOB))>0)" 2>/dev/null)" -gt 0 ] 2>/dev/null
 }
+c_ngrok()       { [ -x "$NGROK" ]; }
+c_ngrok_auth()  { c_ngrok && grep -q "authtoken:" "$NGROK_CFG" 2>/dev/null; }
+c_bridge()      { curl -fsS -m 3 http://127.0.0.1:8787/health >/dev/null 2>&1; }
+# The public URL answers like Composio will see it.
+c_tunnel() {
+  local u; u=$(bridge_url); [ -n "$u" ] || return 1
+  curl -fsS -m 15 -X POST -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream"     -d '{"jsonrpc":"2.0","id":1,"method":"ping"}' "$u" 2>/dev/null | grep -q '"result"'
+}
+# Composio has connected and loaded the tools (it calls tools/list when the app is added).
+c_composio_app() { grep -q "tools/list" "$STATE/bridge.log" 2>/dev/null; }
 run_check() { type "c_$1" >/dev/null 2>&1 || { echo "error=unknown check $1"; return 2; }; "c_$1"; }
 yn() { if run_check "$1"; then echo "$1=ok"; else echo "$1=missing"; fi; }
 
@@ -67,7 +117,7 @@ ext_version() { cat "$EXT_DIR"/*[iI][mM]essage*/manifest.json 2>/dev/null | grep
 
 case "$1" in
 status)
-  for c in mac messages read terminal_fda claude_fda app ext cli login self_chat partb; do yn "$c"; done
+  for c in mac messages read terminal_fda claude_fda app ext cli login self_chat partb ngrok_auth bridge; do yn "$c"; done
   echo "engine=$(engine_status)"
   [ -n "$(ext_version)" ] && echo "ext_version=$(ext_version)"
   echo "running_in=${TERM_PROGRAM:-claude-app}"
@@ -141,28 +191,7 @@ try { j = JSON.parse(fs.readFileSync(f, "utf8")); } catch {}
 j.hasCompletedOnboarding = true; j.projects = j.projects || {};
 j.projects[process.env.P] = Object.assign({}, j.projects[process.env.P], { hasTrustDialogAccepted: true });
 fs.writeFileSync(f, JSON.stringify(j, null, 2));' || { echo "partb=failed"; echo "error=could not update ~/.claude.json"; exit 1; }
-  cp "$SKILL/files/launcher.command" "$LAUNCHER"; chmod +x "$LAUNCHER"
-  mkdir -p "$HOME/Library/LaunchAgents"
-  cat > "$AGENT_PLIST" <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key><string>$AGENT_LABEL</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>/usr/bin/open</string><string>-a</string><string>Terminal</string><string>$LAUNCHER</string>
-  </array>
-  <key>RunAtLoad</key><true/>
-</dict>
-</plist>
-EOF
-  # (Re)load the login item. Loading it opens the "Claude iMessage" window right away.
-  launchctl bootout "gui/$(id -u)/$AGENT_LABEL" >/dev/null 2>&1
-  pkill -f "Claude iMessage.command" >/dev/null 2>&1
-  pkill -f "channels $CHANNEL" >/dev/null 2>&1
-  sleep 1
-  launchctl bootstrap "gui/$(id -u)" "$AGENT_PLIST" >/dev/null 2>&1 || open -a Terminal "$LAUNCHER"
+  restart_window
   echo "composio_rule=$RULE"
   echo "partb=started"
   ;;
@@ -170,10 +199,59 @@ test-start)
   echo $(( ($(date +%s) - 978307200) * 1000000000 )) > "$STATE/since"   # Apple clock: ns since 2001
   echo "test=started"
   ;;
+bridge-install)
+  if ! c_ngrok; then
+    case "$(uname -m)" in arm64) A=arm64;; *) A=amd64;; esac
+    mkdir -p "$RUN/bin"
+    curl -fsSL -o "$STATE/ngrok.zip" "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-darwin-$A.zip"       && unzip -o -q "$STATE/ngrok.zip" -d "$RUN/bin" && rm -f "$STATE/ngrok.zip"
+  fi
+  c_ngrok && echo "ngrok=ok" || { echo "ngrok=failed"; exit 1; }
+  c_ngrok_auth && echo "ngrok_auth=ok" || echo "ngrok_auth=missing"
+  ;;
+ngrok-token)
+  TOKEN=$(pbpaste | tr -d '[:space:]')
+  case "$TOKEN" in
+    *authtoken*) TOKEN=$(echo "$TOKEN" | sed 's/.*authtoken//') ;;   # they copied the whole "ngrok config add-authtoken ..." line
+  esac
+  if ! echo "$TOKEN" | grep -qE '^[A-Za-z0-9_]{30,}$'; then echo "ngrok_token=not_on_clipboard"; exit 1; fi
+  "$NGROK" config add-authtoken "$TOKEN" >/dev/null 2>&1 || { echo "ngrok_token=rejected"; exit 1; }
+  printf '' | pbcopy   # don't leave the token on the clipboard
+  echo "ngrok_token=saved"
+  ;;
+bridge-on)
+  for c in engine terminal_fda ngrok_auth; do run_check "$c" || { echo "bridge=blocked"; echo "missing=$c"; exit 1; }; done
+  if [ ! -s "$STATE/bridge.secret" ]; then
+    (umask 077; openssl rand -hex 24 > "$STATE/bridge.secret")
+  fi
+  touch "$STATE/bridge.enabled"
+  : > "$STATE/bridge.log"
+  restart_window
+  echo "bridge=starting"
+  ;;
+bridge-copy)
+  U=$(bridge_url)
+  [ -n "$U" ] || { echo "bridge_url=not_ready"; exit 1; }
+  # Pin the tunnel's address so it stays the same after restarts (Composio keeps this URL).
+  public_url > "$STATE/ngrok.url"
+  echo "$U" | pbcopy
+  echo "bridge_url=copied ($(public_url)/<secret>/mcp)"
+  ;;
+open-composio-app)
+  U=$(bridge_url); [ -n "$U" ] || { echo "bridge_url=not_ready"; exit 1; }
+  public_url > "$STATE/ngrok.url"
+  echo "$U" | pbcopy
+  open "$COMPOSIO_CUSTOM_APP"
+  echo "opened=composio_custom_app (URL copied, secret not printed)"
+  ;;
+bridge-off)
+  rm -f "$STATE/bridge.enabled" "$STATE/bridge.secret" "$STATE/ngrok.url"
+  restart_window
+  echo "bridge=off (old URL is dead; remove the iMessage app in Composio too)"
+  ;;
 node-path)
   n=$(command -v node 2>/dev/null); [ -n "$n" ] && echo "node=$(readlink -f "$n" 2>/dev/null || echo "$n")" || echo "node=none"
   ;;
 *)
-  sed -n '2,13p' "$0"
+  sed -n '2,/^$/p' "$0"
   ;;
 esac
