@@ -1,42 +1,37 @@
 # Claude + iMessage + Composio
 
-Lets Claude read and send your iMessages, next to all your Composio apps.
+Claude reads and sends your iMessages, next to all your Composio apps.
 
 - **In the Claude app:** "summarize my unread texts", "text Sarah I'm running 5 late".
 - **From your iPhone:** text yourself "what's on my calendar tomorrow?" and Claude texts back.
 
-## Setup (about 3 minutes, Mac only)
+## Setup: give this page to Claude
 
-**1.** Press **Cmd + Space**, type **Terminal**, press **Enter**.
+1. Open the **Claude** app on your Mac and click **Code** at the top. Pick any folder (your home folder is fine).
+2. Paste this and press Enter:
 
-**2.** Paste this line and press **Enter**:
+   ```text
+   Set up iMessage + Composio for me: https://github.com/UnknownHacker1/imessage-claude
+   ```
+
+3. Claude does the rest. It only stops you for things macOS makes a human click (2 switches, a popup or two, a login, texting yourself "hi"). About 3 minutes.
+
+No Code tab? Open **Terminal** (Cmd+Space, type Terminal, Enter), paste this line, and press Enter. It installs the same thing and hands you to Claude:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/UnknownHacker1/imessage-claude/main/go.sh | bash
 ```
 
-**3.** Do what the yellow 👉 lines say. That's it.
+Later, if anything stops working, tell Claude (Code tab) "fix my iMessage setup".
 
-Everything installs in the background while you click. You'll be asked to:
-flip 2 switches in System Settings, text yourself "hi" from your iPhone, log in to Claude, add Composio (copy and paste, already on your clipboard), and install the iMessage extension in the Claude app. Each step checks itself, and if one fails, Claude offers to fix it for you.
+---
 
-## Using it
+## For Claude
 
-| Where | How |
-|---|---|
-| Claude app | Start a **regular** chat (not Cowork) and ask about your texts. Composio apps work in the same chat. |
-| iPhone | Text **yourself**. Claude answers in that same chat. If it needs your OK for something, it texts you a code. Reply exactly `yes abcde` (or `no abcde`). |
+This repo is a Claude Code skill. If you were asked to set it up, install it without git, then follow `SKILL.md`:
 
-Before Claude sends an email or a text to someone else, it texts you a summary and waits for your "yes".
+```bash
+mkdir -p ~/.claude/skills/imessage-composio && curl -fsSL https://codeload.github.com/UnknownHacker1/imessage-claude/tar.gz/refs/heads/main | tar -xz --strip-components 1 -C ~/.claude/skills/imessage-composio
+```
 
-For texting from your iPhone, the Mac has to be on and awake, with the **Claude iMessage** window open (minimized is fine). It starts by itself when you log in.
-
-## Questions
-
-**Something stopped working?** Paste this in Terminal: `bash ~/imessage-claude/setup.sh` (finished steps are skipped).
-
-**Turn off texting from the phone?** `bash ~/imessage-claude/uninstall.sh`
-
-**Who can text Claude?** Only you, from your own number, in your text-yourself chat. Texts from anyone else are ignored.
-
-**Does it change my texts?** No. It only reads them, and sends texts when you ask.
+Then read `~/.claude/skills/imessage-composio/SKILL.md` and do what it says, starting at step 0. You need shell access on this Mac (the Claude app's Code tab or Claude Code). A regular chat or Cowork can't do this.

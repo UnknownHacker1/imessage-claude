@@ -1,5 +1,7 @@
 # Fixes for known problems
 
+Helper: `D="bash ~/.claude/skills/imessage-composio/scripts/doctor.sh"`. `$D status` shows every check. `$D partb` rewrites and restarts the phone assistant. Background install log: `~/imessage-claude/.state/engine.log`.
+
 ## Part B (texting Claude from the iPhone)
 
 **No reply at all.** Look at the "Claude iMessage" Terminal window first.
